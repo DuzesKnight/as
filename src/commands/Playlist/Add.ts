@@ -1,8 +1,8 @@
 import {
   EmbedBuilder,
   ApplicationCommandOptionType,
-  CommandInteraction,
   AutocompleteInteraction,
+  ChatInputCommandInteraction,
 } from 'discord.js'
 import { convertTime } from '../../utilities/ConvertTime.js'
 import { Manager } from '../../manager.js'
@@ -46,159 +46,103 @@ export default class implements Command {
     await handler.deferReply()
 
     const maxLength = await client.db.maxlength.get(handler.user.id)
+    const value = handler.args[0]
 
-    const value = handler.args[0] ? handler.args[0] : null
-    if (value == null || !value)
+    if (!value)
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'invalid')}`)
+            .setDescription(client.i18n.get(handler.language, 'command.playlist', 'invalid'))
             .setColor(client.color),
         ],
       })
 
     const input = handler.args[1]
-
-    const Inputed = input
-
     if (!input)
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'add_match')}`)
+            .setDescription(client.i18n.get(handler.language, 'command.playlist', 'add_match'))
             .setColor(client.color),
         ],
       })
 
-    const result = await client.rainlink.search(input, {
-      requester: handler.user,
-    })
-    const tracks = result.tracks.filter((e) => (maxLength ? e.duration > maxLength : e))
-
-    if (!result.tracks.length)
-      return handler.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'add_match')}`)
-            .setColor(client.color),
-        ],
-      })
-    if (result.type === 'PLAYLIST') for (let track of tracks) TrackAdd.push(track)
-    else TrackAdd.push(tracks[0])
-
-    const Duration = convertTime(tracks[0].duration as number)
-    const TotalDuration = tracks.reduce(
-      (acc, cur) => acc + (cur.duration || 0),
-      tracks[0].duration ?? 0
+    const result = await client.rainlink.search(input, { requester: handler.user })
+    const tracks = result.tracks.filter((e) =>
+      typeof maxLength === 'number' ? e.duration <= maxLength : true
     )
 
-    if (result.type === 'PLAYLIST') {
-      const embed = new EmbedBuilder()
-        .setDescription(
-          `${client.i18n.get(handler.language, 'command.playlist', 'add_playlist', {
-            title: this.getTitle(client, result.type, tracks, Inputed),
-            duration: convertTime(TotalDuration),
-            track: String(tracks.length),
-            user: String(handler.user),
-          })}`
-        )
-        .setColor(client.color)
-      handler.editReply({ content: ' ', embeds: [embed] })
-    } else if (result.type === 'TRACK') {
-      const embed = new EmbedBuilder()
-        .setDescription(
-          `${client.i18n.get(handler.language, 'command.playlist', 'add_track', {
-            title: this.getTitle(client, result.type, tracks),
-            duration: Duration,
-            user: String(handler.user),
-          })}`
-        )
-        .setColor(client.color)
-      handler.editReply({ content: ' ', embeds: [embed] })
-    } else if (result.type === 'SEARCH') {
-      const embed = new EmbedBuilder()
-        .setDescription(
-          `${client.i18n.get(handler.language, 'command.playlist', 'add_search', {
-            title: this.getTitle(client, result.type, tracks),
-            duration: Duration,
-            user: String(handler.user),
-          })}`
-        )
-        .setColor(client.color)
-      handler.editReply({ content: ' ', embeds: [embed] })
-    } else {
-      //The playlist link is invalid.
+    if (!tracks.length)
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'add_match')}`)
+            .setDescription(client.i18n.get(handler.language, 'command.playlist', 'add_match'))
             .setColor(client.color),
         ],
       })
-    }
+
+    if (result.type === 'PLAYLIST') tracks.forEach((t) => TrackAdd.push(t))
+    else TrackAdd.push(tracks[0])
 
     const playlist = await client.db.playlist.get(value)
-
     if (!playlist)
       return handler.followUp({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'invalid')}`)
+            .setDescription(client.i18n.get(handler.language, 'command.playlist', 'invalid'))
             .setColor(client.color),
         ],
       })
 
-    if (playlist.owner !== handler.user?.id) {
-      handler.followUp({
+    if (playlist.owner !== handler.user.id) {
+      TrackAdd.length = 0
+      return handler.followUp({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'command.playlist', 'add_owner')}`)
+            .setDescription(client.i18n.get(handler.language, 'command.playlist', 'add_owner'))
             .setColor(client.color),
         ],
       })
-      TrackAdd.length = 0
-      return
     }
-    const LimitTrack = playlist.tracks!.length + TrackAdd.length
 
-    if (LimitTrack > client.config.player.LIMIT_TRACK) {
-      handler.followUp({
+    const limit = playlist.tracks!.length + TrackAdd.length
+    if (limit > client.config.player.LIMIT_TRACK) {
+      TrackAdd.length = 0
+      return handler.followUp({
         embeds: [
           new EmbedBuilder()
             .setDescription(
-              `${client.i18n.get(handler.language, 'command.playlist', 'add_limit_track', {
+              client.i18n.get(handler.language, 'command.playlist', 'add_limit_track', {
                 limit: String(client.config.player.LIMIT_TRACK),
-              })}`
+              })
             )
             .setColor(client.color),
         ],
       })
-      TrackAdd.length = 0
-      return
     }
 
-    TrackAdd.forEach(async (track) => {
+    for (const track of TrackAdd) {
       await client.db.playlist.push(`${value}.tracks`, {
         title: track.title,
         uri: track.uri,
         length: track.duration,
         thumbnail: track.artworkUrl,
         author: track.author,
-        requester: track.requester, // Just case can push
+        requester: track.requester,
       })
-    })
+    }
 
     const embed = new EmbedBuilder()
       .setDescription(
-        `${client.i18n.get(handler.language, 'command.playlist', 'add_added', {
+        client.i18n.get(handler.language, 'command.playlist', 'add_added', {
           count: String(TrackAdd.length),
           playlist: value,
-        })}`
+        })
       )
       .setColor(client.color)
 
-    handler.followUp({ content: ' ', embeds: [embed] })
     TrackAdd.length = 0
+    return handler.followUp({ embeds: [embed] })
   }
 
   getTitle(
@@ -206,22 +150,18 @@ export default class implements Command {
     type: RainlinkSearchResultType,
     tracks: RainlinkTrack[],
     value?: string
-  ): string {
+  ) {
     if (client.config.player.AVOID_SUSPEND) return tracks[0].title
-    else {
-      if (type === 'PLAYLIST') {
-        return `[${tracks[0].title}](${value})`
-      } else {
-        return `[${tracks[0].title}](${tracks[0].uri})`
-      }
-    }
+    if (type === 'PLAYLIST') return `[${tracks[0].title}](${value})`
+    return `[${tracks[0].title}](${tracks[0].uri})`
   }
 
-  // Autocomplete function
+  // Autocomplete
   public async autocomplete(client: Manager, interaction: GlobalInteraction, language: string) {
-    let choice: AutocompleteInteractionChoices[] = []
-    const url = String((interaction as CommandInteraction).options.get('search')!.value)
+    if (!interaction.isAutocomplete()) return
 
+    const choice: AutocompleteInteractionChoices[] = []
+    const url = interaction.options.getString('search') ?? ''
     const maxLength = await client.db.maxlength.get(interaction.user.id)
 
     const Random =
@@ -229,41 +169,23 @@ export default class implements Command {
         Math.floor(Math.random() * client.config.player.AUTOCOMPLETE_SEARCH.length)
       ]
 
-    const match = client.REGEX.some((match) => {
-      return match.test(url) == true
-    })
-
-    if (match == true) {
+    if (client.REGEX.some((r) => r.test(url))) {
       choice.push({ name: url, value: url })
-      await (interaction as AutocompleteInteraction).respond(choice).catch(() => {})
-      return
+      return interaction.respond(choice).catch(() => {})
     }
 
-    if (client.lavalinkUsing.length == 0) {
-      choice.push({
-        name: `${client.i18n.get(language, 'error', 'no_node')}`,
-        value: `${client.i18n.get(language, 'error', 'no_node')}`,
-      })
-      return
-    }
     const searchRes = await client.rainlink.search(url || Random)
-
     const tracks = searchRes.tracks.filter((e) =>
-      typeof maxLength !== 'string' ? e.duration > maxLength : e
+      typeof maxLength === 'number' ? e.duration <= maxLength : true
     )
 
-    if (tracks.length == 0 || !searchRes.tracks) {
-      return choice.push({ name: 'Error song not matches', value: url })
-    }
-
-    for (let i = 0; i < 10; i++) {
-      const x = tracks[i]
+    for (const x of tracks.slice(0, 10)) {
       choice.push({
-        name: x && x.title ? x.title : 'Unknown track name',
-        value: x && x.uri ? x.uri : url,
+        name: x.title ?? 'Unknown track',
+        value: x.uri ?? url,
       })
     }
 
-    await (interaction as AutocompleteInteraction).respond(choice).catch(() => {})
+    await interaction.respond(choice).catch(() => {})
   }
 }

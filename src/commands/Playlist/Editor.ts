@@ -2,12 +2,11 @@ import {
   EmbedBuilder,
   ApplicationCommandOptionType,
   Message,
-  CommandInteraction,
   ActionRowBuilder,
   TextInputBuilder,
   ModalBuilder,
   TextInputStyle,
-  CommandInteractionOptionResolver,
+  ChatInputCommandInteraction,
 } from 'discord.js'
 import { Manager } from '../../manager.js'
 import { Accessableby, Command } from '../../structures/Command.js'
@@ -40,290 +39,154 @@ export default class implements Command {
 
   public async execute(client: Manager, handler: CommandHandler) {
     if (handler.message) {
-      await this.prefixMode(client, handler.message, handler.args, handler.language, handler.prefix)
+      await this.prefixMode(client, handler.message, handler.args, handler.language)
     } else if (handler.interaction) {
-      await this.interactionMode(client, handler.interaction, handler.language)
-    } else return
+      await this.interactionMode(
+        client,
+        handler.interaction as ChatInputCommandInteraction,
+        handler.language
+      )
+    }
   }
 
-  // Prefix mode
-  private async prefixMode(
-    client: Manager,
-    message: Message,
-    args: string[],
-    language: string,
-    prefix: string
-  ) {
-    const value = args[0] ? args[0] : null
-    if (value == null)
+  // ================= PREFIX MODE =================
+  private async prefixMode(client: Manager, message: Message, args: string[], language: string) {
+    const value = args[0]
+    if (!value)
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(language, 'command.playlist', 'edit_arg')}`)
+            .setDescription(client.i18n.get(language, 'command.playlist', 'edit_arg'))
             .setColor(client.color),
         ],
       })
 
     const playlist = await client.db.playlist.get(value)
-
     if (!playlist)
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(language, 'command.playlist', 'edit_notfound')}`)
+            .setDescription(client.i18n.get(language, 'command.playlist', 'edit_notfound'))
             .setColor(client.color),
         ],
       })
+
     if (playlist.owner !== message.author.id)
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'edit_playlist_owner')}`
-            )
+            .setDescription(client.i18n.get(language, 'command.playlist', 'edit_playlist_owner'))
             .setColor(client.color),
         ],
       })
 
     const questions = this.questionString(client, language)
 
-    for (let i = 0; i < questions.length; i++) {
-      const send = await message.reply(questions[i].question)
+    for (const q of questions) {
+      const send = await message.reply(q.question)
       const res = await send.channel.awaitMessages({
         filter: (m) => m.author.id === message.author.id,
-        time: 5 * 6000,
         max: 1,
+        time: 30000,
       })
-      const msg = await res.first()!.content
-      if (msg !== undefined || null) count++
+
+      const msg = res.first()?.content ?? ''
       answer.push(msg)
-      if (count == questions.length) {
-        const idCol = answer[0]
-        const nameCol = answer[1]
-        const desCol = answer[2]
-        const modeCol = answer[3]
+      count++
+    }
 
-        const newId = idCol.length !== 0 ? idCol : null
-        const newName = nameCol.length !== 0 ? nameCol : playlist.name
-        const newDes =
-          desCol.length !== 0 ? desCol : playlist.description ? playlist.description : 'null'
-        const newMode = modeCol.length !== 0 ? modeCol : playlist.private
+    const [idCol, nameCol, desCol, modeCol] = answer
 
-        if (newId) {
-          if (!this.vaildId(newId)) {
-            message.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(
-                    `${client.i18n.get(language, 'command.playlist', 'edit_invalid_id')}`
-                  )
-                  .setColor(client.color),
-              ],
-            })
+    const newId = idCol || null
+    const newName = nameCol || playlist.name
+    const newDes = desCol || playlist.description || 'null'
+    const newMode = modeCol || playlist.private
 
-            count = 0
-            answer.length = 0
-            return
-          }
+    if (this.validMode(String(newMode)) === null) {
+      count = 0
+      answer = []
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription(client.i18n.get(language, 'command.playlist', 'edit_invalid_mode'))
+            .setColor(client.color),
+        ],
+      })
+    }
 
-          const isAlreadyId = await client.db.playlist.get(newId)
-
-          if (isAlreadyId)
-            return message.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(
-                    `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_invalid_id')}`
-                  )
-                  .setColor(client.color),
-              ],
-            })
-
-          if (this.validMode(String(newMode)) == null) {
-            message.reply({
-              embeds: [
-                new EmbedBuilder()
-                  .setDescription(
-                    `${client.i18n.get(language, 'command.playlist', 'edit_invalid_mode')}`
-                  )
-                  .setColor(client.color),
-              ],
-            })
-
-            count = 0
-            answer.length = 0
-            return
-          }
-
-          await client.db.playlist.set(newId, {
-            id: newId,
-            name: newName,
-            description: newDes,
-            owner: playlist.owner,
-            tracks: playlist.tracks,
-            private: newMode,
-            created: playlist.created,
-          })
-
-          await message.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription(
-                  `${client.i18n.get(language, 'command.playlist', 'edit_success', {
-                    playlistId: newId,
-                  })}`
-                )
-                .setColor(client.color),
-            ],
-          })
-          if (playlist.id !== newId) await client.db.playlist.delete(playlist.id)
-          count = 0
-          answer.length = 0
-          return
-        }
-
-        if (this.validMode(String(newMode)) == null) {
-          message.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setDescription(
-                  `${client.i18n.get(language, 'command.playlist', 'edit_invalid_mode')}`
-                )
-                .setColor(client.color),
-            ],
-          })
-
-          count = 0
-          answer.length = 0
-          return
-        }
-
-        await client.db.playlist.set(`${value}.name`, newName)
-        await client.db.playlist.set(`${value}.description`, newDes)
-        await client.db.playlist.set(`${value}.private`, newMode)
-
-        const embed = new EmbedBuilder()
-          .setDescription(
-            `${client.i18n.get(language, 'command.playlist', 'edit_success', {
-              playlistId: playlist.id,
-            })}`
-          )
-          .setColor(client.color)
-        message.reply({ embeds: [embed] })
-
+    if (newId && newId !== playlist.id) {
+      if (!this.vaildId(newId)) {
         count = 0
-        answer.length = 0
+        answer = []
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(client.i18n.get(language, 'command.playlist', 'edit_invalid_id'))
+              .setColor(client.color),
+          ],
+        })
       }
+
+      if (await client.db.playlist.get(newId)) {
+        count = 0
+        answer = []
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(
+                client.i18n.get(language, 'command.playlist', 'ineraction_edit_invalid_id')
+              )
+              .setColor(client.color),
+          ],
+        })
+      }
+
+      await client.db.playlist.set(newId, {
+        ...playlist,
+        id: newId,
+        name: newName,
+        description: newDes,
+        private: newMode,
+      })
+
+      await client.db.playlist.delete(playlist.id)
+    } else {
+      await client.db.playlist.set(`${playlist.id}.name`, newName)
+      await client.db.playlist.set(`${playlist.id}.description`, newDes)
+      await client.db.playlist.set(`${playlist.id}.private`, newMode)
     }
+
+    count = 0
+    answer = []
+
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription(
+            client.i18n.get(language, 'command.playlist', 'edit_success', {
+              playlistId: newId ?? playlist.id,
+            })
+          )
+          .setColor(client.color),
+      ],
+    })
   }
 
-  private questionString(client: Manager, language: string) {
-    return [
-      {
-        question: `${client.i18n.get(language, 'command.playlist', 'edit_playlist_id_label')}`,
-      },
-      {
-        question: `${client.i18n.get(language, 'command.playlist', 'edit_playlist_name_label')}`,
-      },
-      {
-        question: `${client.i18n.get(language, 'command.playlist', 'edit_playlist_des_label')}`,
-      },
-      {
-        question: `${client.i18n.get(language, 'command.playlist', 'edit_playlist_private_label')}`,
-      },
-    ]
-  }
-
-  private vaildId(id: string) {
-    return /^[\w&.-]+$/.test(id)
-  }
-
-  private validMode(value: string) {
-    if (typeof value === 'string') {
-      value = value.trim().toLowerCase()
-    }
-    switch (value) {
-      case 'public':
-        return true
-      case 'private':
-        return false
-      case 'true':
-        return true
-      case 'false':
-        return false
-      default:
-        return null
-    }
-  }
-
-  // Interaction mode
+  // ================= INTERACTION MODE =================
   private async interactionMode(
     client: Manager,
-    interaction: CommandInteraction,
+    interaction: ChatInputCommandInteraction,
     language: string
   ) {
-    const playlistId = new TextInputBuilder()
-      .setLabel(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_id_label')}`
-      )
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_id_placeholder')}`
-      )
-      .setCustomId('pl_id')
-      .setRequired(false)
+    const value = interaction.options.getString('id', true)
 
-    const playlistName = new TextInputBuilder()
-      .setLabel(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_name_label')}`
-      )
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_name_placeholder')}`
-      )
-      .setCustomId('pl_name')
-      .setRequired(false)
-    const playlistDes = new TextInputBuilder()
-      .setLabel(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_des_label')}`
-      )
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_des_placeholder')}`
-      )
-      .setCustomId('pl_des')
-      .setRequired(false)
-    const playlistPrivate = new TextInputBuilder()
-      .setLabel(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_private_label')}`
-      )
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(
-        `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_private_placeholder')}`
-      )
-      .setCustomId('pl_mode')
-      .setRequired(false)
-
-    const modal = new ModalBuilder()
-      .setCustomId('play_extra')
-      .setTitle('Playlist editor')
-      .setComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(playlistId),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(playlistName),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(playlistDes),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(playlistPrivate)
-      )
-
-    const value = (interaction.options as CommandInteractionOptionResolver).getString('id')
-
-    const playlist = await client.db.playlist.get(value!)
-
+    const playlist = await client.db.playlist.get(value)
     if (!playlist)
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
             .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_notfound')}`
+              client.i18n.get(language, 'command.playlist', 'ineraction_edit_notfound')
             )
             .setColor(client.color),
         ],
@@ -334,144 +197,131 @@ export default class implements Command {
         embeds: [
           new EmbedBuilder()
             .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_owner')}`
+              client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_owner')
             )
             .setColor(client.color),
         ],
       })
+
+    const modal = new ModalBuilder()
+      .setCustomId('playlist_editor')
+      .setTitle('Playlist editor')
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('pl_id')
+            .setLabel('Playlist ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('pl_name')
+            .setLabel('Playlist name')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('pl_des')
+            .setLabel('Playlist description')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId('pl_mode')
+            .setLabel('public / private')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        )
+      )
 
     await interaction.showModal(modal)
 
-    const collector = await interaction
-      .awaitModalSubmit({
-        time: 60000,
-        filter: (i) => i.user.id === interaction.user.id,
-      })
-      .catch((error) => {
-        console.error(error)
-        return null
-      })
+    const submit = await interaction.awaitModalSubmit({
+      time: 60000,
+      filter: (i) => i.user.id === interaction.user.id,
+    })
 
-    if (!collector)
-      return interaction.editReply({
+    await submit.deferReply()
+
+    const idCol = submit.fields.getTextInputValue('pl_id')
+    const nameCol = submit.fields.getTextInputValue('pl_name')
+    const desCol = submit.fields.getTextInputValue('pl_des')
+    const modeCol = submit.fields.getTextInputValue('pl_mode')
+
+    const newId = idCol || null
+    const newName = nameCol || playlist.name
+    const newDes = desCol || playlist.description || 'null'
+    const newMode = modeCol || playlist.private
+
+    if (this.validMode(String(newMode)) === null)
+      return submit.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_playlist_error')}`
-            )
+            .setDescription(client.i18n.get(language, 'command.playlist', 'edit_invalid_mode'))
             .setColor(client.color),
         ],
       })
 
-    // Send Message
-    await collector.deferReply()
-
-    if (!playlist)
-      return collector.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_notfound')}`
-            )
-            .setColor(client.color),
-        ],
-      })
-    const idCol = collector.fields.getTextInputValue('pl_id')
-    const nameCol = collector.fields.getTextInputValue('pl_name')
-    const desCol = collector.fields.getTextInputValue('pl_des')
-    const modeCol = collector.fields.getTextInputValue('pl_mode')
-
-    const newId = idCol.length !== 0 ? idCol : null
-    const newName = nameCol.length !== 0 ? nameCol : playlist.name
-    const newDes =
-      desCol.length !== 0 ? desCol : playlist.description ? playlist.description : 'null'
-    const newMode = modeCol.length !== 0 ? modeCol : playlist.private
-
-    if (newId) {
-      if (!this.vaildId(newId))
-        return collector.editReply({
+    if (newId && newId !== playlist.id) {
+      if (!this.vaildId(newId) || (await client.db.playlist.get(newId)))
+        return submit.editReply({
           embeds: [
             new EmbedBuilder()
               .setDescription(
-                `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_invalid_id')}`
-              )
-              .setColor(client.color),
-          ],
-        })
-
-      const isAlreadyId = await client.db.playlist.get(newId)
-
-      if (isAlreadyId)
-        return collector.editReply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription(
-                `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_invalid_id')}`
-              )
-              .setColor(client.color),
-          ],
-        })
-
-      if (this.validMode(String(newMode)) == null)
-        return collector.editReply({
-          embeds: [
-            new EmbedBuilder()
-              .setDescription(
-                `${client.i18n.get(language, 'command.playlist', 'edit_invalid_mode')}`
+                client.i18n.get(language, 'command.playlist', 'ineraction_edit_invalid_id')
               )
               .setColor(client.color),
           ],
         })
 
       await client.db.playlist.set(newId, {
+        ...playlist,
         id: newId,
         name: newName,
         description: newDes,
-        owner: playlist.owner,
-        tracks: playlist.tracks,
         private: newMode,
-        created: playlist.created,
       })
 
-      await collector.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_success', {
-                playlistId: newId,
-              })}`
-            )
-            .setColor(client.color),
-        ],
-      })
-
-      if (playlist.id !== newId) await client.db.playlist.delete(playlist.id)
-      return
+      await client.db.playlist.delete(playlist.id)
+    } else {
+      await client.db.playlist.set(`${playlist.id}.name`, newName)
+      await client.db.playlist.set(`${playlist.id}.description`, newDes)
+      await client.db.playlist.set(`${playlist.id}.private`, newMode)
     }
 
-    if (this.validMode(String(newMode)) == null)
-      return collector.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(`${client.i18n.get(language, 'command.playlist', 'edit_invalid_mode')}`)
-            .setColor(client.color),
-        ],
-      })
-
-    await client.db.playlist.set(`${value}.name`, newName)
-    await client.db.playlist.set(`${value}.description`, newDes)
-    await client.db.playlist.set(`${value}.private`, newMode)
-
-    await collector.editReply({
+    return submit.editReply({
       embeds: [
         new EmbedBuilder()
           .setDescription(
-            `${client.i18n.get(language, 'command.playlist', 'ineraction_edit_success', {
-              playlistId: playlist.id,
-            })}`
+            client.i18n.get(language, 'command.playlist', 'ineraction_edit_success', {
+              playlistId: newId ?? playlist.id,
+            })
           )
           .setColor(client.color),
       ],
     })
+  }
+
+  private vaildId(id: string) {
+    return /^[\w&.-]+$/.test(id)
+  }
+
+  private validMode(value: string) {
+    value = String(value).trim().toLowerCase()
+    if (value === 'public' || value === 'true') return true
+    if (value === 'private' || value === 'false') return false
+    return null
+  }
+
+  private questionString(client: Manager, language: string) {
+    return [
+      { question: client.i18n.get(language, 'command.playlist', 'edit_playlist_id_label') },
+      { question: client.i18n.get(language, 'command.playlist', 'edit_playlist_name_label') },
+      { question: client.i18n.get(language, 'command.playlist', 'edit_playlist_des_label') },
+      { question: client.i18n.get(language, 'command.playlist', 'edit_playlist_private_label') },
+    ]
   }
 }

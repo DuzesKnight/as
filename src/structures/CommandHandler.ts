@@ -23,7 +23,7 @@ export type CommandHandlerOptions = {
   prefix: string
 }
 
-export type GlobalMsg = InteractionResponse<boolean> | (Message<boolean> | undefined)
+export type GlobalMsg = InteractionResponse<boolean> | Message<boolean> | undefined
 
 export enum ParseMentionEnum {
   ERROR,
@@ -50,9 +50,10 @@ export class CommandHandler {
   public client: Manager
   public args: string[]
   public createdAt: number
-  public msg: GlobalMsg
+  public msg?: GlobalMsg
   public prefix: string
   public modeLang: { enable: string; disable: string }
+
   public USERS_PATTERN: RegExp = /<@!?(\d{17,19})>/
   public ROLES_PATTERN: RegExp = /<@&(\d{17,19})>/
   public CHANNELS_PATTERN: RegExp = /<#(\d{17,19})>/
@@ -74,76 +75,62 @@ export class CommandHandler {
   }
 
   get userData() {
-    if (this.interaction) {
-      return this.interaction.user
-    } else {
-      return this.message?.author
-    }
+    return this.interaction ? this.interaction.user : this.message?.author
   }
 
   get modeLangData() {
     return {
-      enable: `${this.client.i18n.get(this.language, 'global', 'enable')}`,
-      disable: `${this.client.i18n.get(this.language, 'global', 'disable')}`,
+      enable: this.client.i18n.get(this.language, 'global', 'enable'),
+      disable: this.client.i18n.get(this.language, 'global', 'disable'),
     }
   }
 
   get guildData() {
-    if (this.interaction) {
-      return this.interaction.guild
-    } else {
-      return this.message?.guild
-    }
+    return this.interaction ? this.interaction.guild : this.message?.guild
   }
 
   get memberData() {
-    if (this.interaction) {
-      return this.interaction.member as GuildMember
-    } else {
-      return this.message?.member
-    }
+    return this.interaction ? (this.interaction.member as GuildMember) : this.message?.member
   }
 
   get createdStimeStampData() {
-    if (this.interaction) {
-      return Number(this.interaction.createdTimestamp)
-    } else {
-      return Number(this.message?.createdTimestamp)
-    }
+    return this.interaction
+      ? Number(this.interaction.createdTimestamp)
+      : Number(this.message?.createdTimestamp)
   }
 
   get channelData() {
-    if (this.interaction) {
-      return this.interaction.channel
-    } else {
-      return this.message?.channel
-    }
+    return this.interaction ? this.interaction.channel : this.message?.channel
   }
+
+  // ===================== MESSAGES =====================
 
   public async sendMessage(data: string | BaseMessageOptions) {
     if (this.interaction) {
-      return await this.interaction.reply(data)
-    } else {
-      return await this.message?.reply(data)
+      return this.interaction.reply(data)
     }
+    return this.message?.reply(data)
   }
 
   public async followUp(data: string | BaseMessageOptions) {
     if (this.interaction) {
-      return await this.interaction.followUp(data)
-    } else {
-      return await this.message?.reply(data)
+      return this.interaction.followUp(data)
     }
+    return this.message?.reply(data)
   }
+
+  // ===================== FIXED DEFER =====================
 
   public async deferReply() {
     if (this.interaction) {
-      const data = await this.interaction.deferReply({ ephemeral: false })
-      return (this.msg = data)
-    } else {
-      const data = await this.message?.reply(`**${this.client.user?.username}** is thinking...`)
-      return (this.msg = data)
+      const data = await this.interaction.deferReply()
+      this.msg = data
+      return data
     }
+
+    const data = await this.message?.reply(`**${this.client.user?.username}** is thinking...`)
+    this.msg = data
+    return data
   }
 
   public async editReply(data: BaseMessageOptions): Promise<GlobalMsg> {
@@ -151,79 +138,62 @@ export class CommandHandler {
       this.client.logger.error(CommandHandler.name, 'You have not declared deferReply()')
       return
     }
+
     if (this.interaction) {
       return this.msg.edit(data)
-    } else {
-      if (data.embeds && !data.content)
-        return this.msg.edit({
-          content: '',
-          embeds: data.embeds,
-          components: data.components,
-          allowedMentions: data.allowedMentions,
-        })
-      else return this.msg.edit(data)
     }
+
+    if (data.embeds && !data.content) {
+      return this.msg.edit({
+        content: '',
+        embeds: data.embeds,
+        components: data.components,
+        allowedMentions: data.allowedMentions,
+      })
+    }
+
+    return this.msg.edit(data)
   }
+
+  // ===================== UTILITIES =====================
 
   public async parseMentions(data: string): Promise<ParseMentionInterface> {
     if (this.USERS_PATTERN.test(data)) {
       const extract = this.USERS_PATTERN.exec(data)
       const user = await this.client.users.fetch(extract![1]).catch(() => undefined)
-      if (!user || user == null)
-        return {
-          type: ParseMentionEnum.ERROR,
-          data: 'error',
-        }
-      return {
-        type: ParseMentionEnum.USER,
-        data: user,
-      }
+      return user
+        ? { type: ParseMentionEnum.USER, data: user }
+        : { type: ParseMentionEnum.ERROR, data: 'error' }
     }
+
     if (this.CHANNELS_PATTERN.test(data)) {
       const extract = this.CHANNELS_PATTERN.exec(data)
       const channel = await this.client.channels.fetch(extract![1]).catch(() => undefined)
-      if (!channel || channel == null)
-        return {
-          type: ParseMentionEnum.ERROR,
-          data: 'error',
-        }
-      return {
-        type: ParseMentionEnum.CHANNEL,
-        data: channel,
-      }
+      return channel
+        ? { type: ParseMentionEnum.CHANNEL, data: channel }
+        : { type: ParseMentionEnum.ERROR, data: 'error' }
     }
+
     if (this.ROLES_PATTERN.test(data)) {
       const extract = this.ROLES_PATTERN.exec(data)
       const role = this.message
         ? await this.message.guild?.roles.fetch(extract![1]).catch(() => undefined)
         : await this.interaction?.guild?.roles.fetch(extract![1]).catch(() => undefined)
-      if (!role || role == null)
-        return {
-          type: ParseMentionEnum.ERROR,
-          data: 'error',
-        }
-      return {
-        type: ParseMentionEnum.ROLE,
-        data: role,
-      }
+
+      return role
+        ? { type: ParseMentionEnum.ROLE, data: role }
+        : { type: ParseMentionEnum.ERROR, data: 'error' }
     }
+
     if (this.EVERYONE_PATTERN.test(data)) {
-      return {
-        type: ParseMentionEnum.EVERYONE,
-        data: true,
-      }
+      return { type: ParseMentionEnum.EVERYONE, data: true }
     }
-    return {
-      type: ParseMentionEnum.ERROR,
-      data: 'error',
-    }
+
+    return { type: ParseMentionEnum.ERROR, data: 'error' }
   }
 
   public addAttachment(data: Collection<string, Attachment>) {
-    return this.attactments.push(
-      ...data.map((data) => {
-        return data
-      })
-    )
+    this.attactments.push(...data.map((d) => d))
+    return this.attactments
   }
 }

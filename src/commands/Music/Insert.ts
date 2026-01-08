@@ -1,7 +1,7 @@
 import {
   ApplicationCommandOptionType,
   AutocompleteInteraction,
-  CommandInteraction,
+  ChatInputCommandInteraction,
   EmbedBuilder,
 } from 'discord.js'
 import { Manager } from '../../manager.js'
@@ -45,37 +45,35 @@ export default class implements Command {
     await handler.deferReply()
 
     const player = client.rainlink.players.get(handler.guild!.id) as RainlinkPlayer
-
     const maxLength = await client.db.maxlength.get(handler.user.id)
 
     const position = Number(handler.args[0])
     handler.args.splice(0, 1)
     const song = handler.args.join(' ')
-    if (position && isNaN(+position))
+
+    if (position && isNaN(position))
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(`${client.i18n.get(handler.language, 'error', 'number_invalid')}`)
+            .setDescription(client.i18n.get(handler.language, 'error', 'number_invalid'))
             .setColor(client.color),
         ],
       })
-    if (Number(position) == 0)
+
+    if (position === 0)
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(handler.language, 'command.music', 'insert_already')}`
-            )
+            .setDescription(client.i18n.get(handler.language, 'command.music', 'insert_already'))
             .setColor(client.color),
         ],
       })
-    if (Number(position) > player.queue.length)
+
+    if (position > player.queue.length)
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(handler.language, 'command.music', 'insert_notfound')}`
-            )
+            .setDescription(client.i18n.get(handler.language, 'command.music', 'insert_notfound'))
             .setColor(client.color),
         ],
       })
@@ -87,9 +85,7 @@ export default class implements Command {
       return handler.editReply({
         embeds: [
           new EmbedBuilder()
-            .setDescription(
-              `${client.i18n.get(handler.language, 'command.music', 'insert_notfound')}`
-            )
+            .setDescription(client.i18n.get(handler.language, 'command.music', 'insert_notfound'))
             .setColor(client.color),
         ],
       })
@@ -98,11 +94,11 @@ export default class implements Command {
 
     const embed = new EmbedBuilder()
       .setDescription(
-        `${client.i18n.get(handler.language, 'command.music', 'insert_desc', {
+        client.i18n.get(handler.language, 'command.music', 'insert_desc', {
           name: getTitle(client, track),
           duration: convertTime(player.position),
           request: String(track.requester),
-        })}`
+        })
       )
       .setColor(client.color)
 
@@ -132,45 +128,50 @@ export default class implements Command {
 
   // Autocomplete function
   async autocomplete(client: Manager, interaction: GlobalInteraction, language: string) {
-    let choice: AutocompleteInteractionChoices[] = []
-    const url = String((interaction as CommandInteraction).options.get('search')!.value)
+    const choice: AutocompleteInteractionChoices[] = []
+
+    if (!interaction.isAutocomplete()) return
+
+    const url = interaction.options.getString('search') ?? ''
 
     const Random =
       client.config.player.AUTOCOMPLETE_SEARCH[
         Math.floor(Math.random() * client.config.player.AUTOCOMPLETE_SEARCH.length)
       ]
 
-    const match = client.REGEX.some((match) => {
-      return match.test(url) == true
-    })
+    const match = client.REGEX.some((regex) => regex.test(url))
 
-    if (match == true) {
+    if (match) {
       choice.push({ name: url, value: url })
-      await (interaction as AutocompleteInteraction).respond(choice).catch(() => {})
+      await interaction.respond(choice).catch(() => {})
       return
     }
 
-    if (client.lavalinkUsing.length == 0) {
+    if (client.lavalinkUsing.length === 0) {
       choice.push({
-        name: `${client.i18n.get(language, 'command.music', 'no_node')}`,
-        value: `${client.i18n.get(language, 'command.music', 'no_node')}`,
+        name: client.i18n.get(language, 'command.music', 'no_node'),
+        value: client.i18n.get(language, 'command.music', 'no_node'),
       })
+      await interaction.respond(choice).catch(() => {})
       return
     }
+
     const searchRes = await client.rainlink.search(url || Random)
 
-    if (searchRes.tracks.length == 0 || !searchRes.tracks) {
-      return choice.push({ name: 'Error song not matches', value: url })
+    if (!searchRes.tracks.length) {
+      choice.push({ name: 'No results found', value: url })
+      await interaction.respond(choice).catch(() => {})
+      return
     }
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < Math.min(10, searchRes.tracks.length); i++) {
       const x = searchRes.tracks[i]
       choice.push({
-        name: x && x.title ? x.title : 'Unknown track name',
-        value: x && x.uri ? x.uri : url,
+        name: x.title ?? 'Unknown track',
+        value: x.uri ?? url,
       })
     }
 
-    await (interaction as AutocompleteInteraction).respond(choice).catch(() => {})
+    await interaction.respond(choice).catch(() => {})
   }
 }
